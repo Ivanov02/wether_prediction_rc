@@ -1,4 +1,5 @@
 from datetime import datetime
+import numpy as np
 
 def convert_fahrenheit_to_celsius(values):
     return round(((values - 32) / 1.8), 2)
@@ -22,3 +23,15 @@ def get_season(date_str):
         return "vara"
     else:
         return "toamna"
+
+def get_state_season_for_date(df, date_str):
+    day_data = df.loc[df['date'] == date_str]
+    if not day_data.empty:
+        return day_data.iloc[0]['state_season']
+    else:
+        raise ValueError("Data specificată nu există în DataFrame")
+
+def state_to_distribution(state, all_states):
+    dist = [0]*len(all_states)
+    dist[all_states.index(state)] = 1
+    return np.array(dist)
