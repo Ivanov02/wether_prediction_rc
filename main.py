@@ -1,74 +1,56 @@
+import pymc as pm
+import arviz as az
 import pandas as pd
-import numpy as np
-from helping_functions import *
+import pickle
 
-weather_df = pd.read_csv("Tulcea 2023-01-01 to 2024-12-01.csv")
-weather_df.drop(["feelslikemax", "feelslikemin", "dew", "precipprob","precipcover", "snowdepth", "windgust",
-                        "visibility", "solarradiation", "solarenergy", "severerisk", "moonphase", "conditions", "icon", "stations", "description", "temp"],
-                axis='columns', inplace=True)
-weather_df.rename(columns={"datetime" : "date"}, inplace=True)
+def predict_feelslike(test_data, trace_path="model_trace.nc", scaler_path="scaler.pkl"):
+    print("=== Încărcăm trace-ul și scaler-ul ===")
+    trace = az.from_netcdf(trace_path)
+    with open(scaler_path, 'rb') as f:
+        scaler = pickle.load(f)
 
-# print(weather_df.columns)
-# print(weather_df.loc[1, "name"])
-# print(weather_df.loc[1, "date"])
-# print(weather_df.loc[1, "tempmax"])
-# print(weather_df.loc[1, "tempmin"])
-# print(weather_df.loc[1, "feelslike"])
-# print(weather_df.loc[1, "humidity"])
-# print(weather_df.loc[1, "precip"])
-# print(weather_df.loc[1, "windspeed"])
-# print(weather_df.loc[1, "uvindex"])
-# print(weather_df.loc[1, "winddir"])
-# print(weather_df.loc[1, "preciptype"])
-# print(weather_df.loc[1, "sealevelpressure"])
-# print(weather_df.loc[1, "cloudcover"])
+    print("=== Normalizăm datele de test ===")
+    normalized_data = scaler.transform(test_data[["tempmax", "humidity", "windspeed"]])
 
-weather_df.sort_values(by='date', inplace=True)
+    print("=== Recreăm modelul pentru predicții ===")
+    with pm.Model() as model:
+        tempmax_data = pm.Data("tempmax_data", normalized_data[:, 0])
+        humidity_data = pm.Data("humidity_data", normalized_data[:, 1])
+        windspeed_data = pm.Data("windspeed_data", normalized_data[:, 2])
 
-weather_df['season'] = weather_df['date'].apply(get_season) # determinam sezonul
-weather_df['temp_state'] = weather_df['tempmax'].apply(classify_state) # determinam starea frig/moderat/cald
-weather_df['state_season'] = weather_df['temp_state'] + "_" + weather_df['season'] # concatenarea combinatiei state+season
+        alpha = pm.Normal("alpha", mu=0, sigma=1)
+        beta_temp = pm.Normal("beta_temp", mu=0, sigma=0.3)
+        beta_hum = pm.Normal("beta_hum", mu=0, sigma=0.3)
+        beta_wind = pm.Normal("beta_wind", mu=0, sigma=0.3)
+        sigma = pm.HalfNormal("sigma", sigma=0.5)
 
-temp_states = ["frig", "moderat", "cald"]
-seasons = ["iarna", "primavara", "vara", "toamna"]
-# adaugarae de anotimpuri ar face trecerea de la o stare la alta strict pe baza de temperatura fara context-ul sezonier
-all_states = [f"{t}_{s}" for s in seasons for t in temp_states] # 3x4 = 12 stari
+        mu = alpha + beta_temp*tempmax_data + beta_hum*humidity_data + beta_wind*windspeed_data
 
-transition_matrix = pd.DataFrame(0, index=all_states, columns=all_states, dtype=float)
+        feelslike_obs = pm.Normal("feelslike_obs", mu=mu, sigma=sigma, observed=None)
 
-states_sequence = weather_df['state_season'].tolist() # lista cronologica de state_season
+        print("=== Generăm predicții ===")
+        ppc = pm.sample_posterior_predictive(
+            trace,
+            var_names=["feelslike_obs"],
+            return_inferencedata=False
+        )
 
-for i in range(len(states_sequence)-1):
-    current_state = states_sequence[i]
-    next_state = states_sequence[i+1]
-    transition_matrix.loc[current_state, next_state] += 1
+        arr = ppc["feelslike_obs"]  # Forma e (chains, draws, n_test)
+        print("Forma lui ppc['feelslike_obs'] =", arr.shape)
 
-transition_matrix = transition_matrix.div(transition_matrix.sum(axis=1), axis=0).fillna(0) # conversia in probabilitati (fiecare valoare/suma randului)
+        # Facem media pe chain și draws => rămâne axa test (3 rânduri)
+        predictions = arr.mean(axis=(0, 1))
 
-print("Matricea de tranziție:") # probabilitatea de a trece de la o stare la alta
-print(transition_matrix)
-print()
+    return pd.Series(predictions, index=test_data.index)
 
-selected_date = "2024-12-01"
-current_state_season = get_state_season_for_date(weather_df, selected_date)
-current_distribution = state_to_distribution(current_state_season, all_states)
 
-print(f"Starea sezonieră pentru {selected_date} este '{current_state_season}'")
-print("Distribuția curentă:", current_distribution)
-print()
+if __name__ == "__main__":
+    test_data = pd.DataFrame({
+        "tempmax": [30],
+        "humidity": [70],
+        "windspeed": [10]
+    })
 
-next_day_prob = current_distribution.dot(transition_matrix.values) # produsul vectorului distributiei curent * matricea de tranzitie = prob ziua urmatoare
-print(f"Probabilitățile pentru ziua următoare după {selected_date}:")
-for s, p in zip(all_states, next_day_prob):
-    print(f"{s}: {p:.2f}")
-
-print()
-
-days_ahead = 20
-future_distribution = current_distribution.copy()
-for i in range(days_ahead):
-    future_distribution = future_distribution.dot(transition_matrix.values)
-
-print(f"Probabilitățile peste {days_ahead} zile de la {selected_date}:")
-for s, p in zip(all_states, future_distribution):
-    print(f"{s}: {p:.2f}")
+    predicted_feelslike = predict_feelslike(test_data)
+    print("=== Predicții pentru datele de test ===")
+    print(predicted_feelslike)
