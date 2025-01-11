@@ -46,9 +46,9 @@ def predict_feelslike(test_data, trace_path="model_trace.nc", scaler_path="scale
 
 if __name__ == "__main__":
     test_data = pd.DataFrame({
-        "tempmax": [30],
-        "humidity": [70],
-        "windspeed": [10]
+        "tempmax": [20,15],
+        "humidity": [50,40],
+        "windspeed": [10,15]
     })
 
     predicted_feelslike = predict_feelslike(test_data)
