@@ -4,15 +4,12 @@ import pandas as pd
 import pickle
 
 def predict_feelslike(test_data, trace_path="model_trace.nc", scaler_path="scaler.pkl"):
-    print("=== Încărcăm trace-ul și scaler-ul ===")
     trace = az.from_netcdf(trace_path)
     with open(scaler_path, 'rb') as f:
         scaler = pickle.load(f)
 
-    print("=== Normalizăm datele de test ===")
     normalized_data = scaler.transform(test_data[["tempmax", "humidity", "windspeed"]])
 
-    print("=== Recreăm modelul pentru predicții ===")
     with pm.Model() as model:
         tempmax_data = pm.Data("tempmax_data", normalized_data[:, 0])
         humidity_data = pm.Data("humidity_data", normalized_data[:, 1])
